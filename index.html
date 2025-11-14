@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EcoLens: Material Sustainability Checker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <!-- Firebase Imports for Auth and API access -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // Use provided global variables
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : {apiKey: "AIzaSyCxKkfAs2J4sT1nzsT13bV0-ZdXRiSVqbE",
+  authDomain: "ecolens-material-checker.firebaseapp.com",
+  projectId: "ecolens-material-checker",
+  storageBucket: "ecolens-material-checker.firebasestorage.app",
+  messagingSenderId: "383278574134",
+  appId: "1:383278574134:web:4267b2d38dcc09e5c74697",
+  measurementId: "G-1ZGPCLW4KZ"});
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        if (Object.keys(firebaseConfig).length) {
+            const app = initializeApp(firebaseConfig);
+            const auth = getAuth(app);
+            setLogLevel('Debug');
+
+            // Global exposure for use in the non-module script block
+            window.firebaseAuth = auth;
+
+            onAuthStateChanged(auth, async (user) => {
+                if (!user) {
+                    try {
+                        if (initialAuthToken) {
+                            await signInWithCustomToken(auth, initialAuthToken);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    } catch (error) {
+                        console.error("Firebase Auth Error:", error);
+                    }
+                }
+            });
+        } else {
+            console.error("Firebase configuration is missing or invalid.");
+        }
+    </script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f4f8; /* Lighter background */
+        }
+        /* Custom styling for the analysis area */
+        #analysis-result {
+            transition: all 0.5s ease-in-out;
+            border-radius: 0.75rem; /* Slightly more rounded */
+            overflow: hidden; /* Contains the colored header */
+        }
+        #analysis-canvas, #image-preview {
+            display: block;
+            max-width: 100%;
+            height: auto;
+            border-radius: 0.5rem;
+            object-fit: contain;
+        }
+        .progress-bar {
+            height: 10px;
+            transition: width 0.5s ease-out, background-color 0.5s ease-out;
+        }
+        /* Pulse for loading state */
+        .animate-pulse-slow {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        /* Style for the video feed in the camera overlay */
+        #camera-feed {
+            width: 100%;
+            max-width: 90vw;
+            max-height: 80vh;
+        }
+    </style>
+</head>
+<body class="p-4 sm:p-8">
+
+    <div class="max-w-4xl mx-auto bg-white shadow-2xl rounded-2xl p-6 sm:p-10 border border-gray-100">
+
+        <header class="text-center mb-10">
+            <h1 class="text-3xl sm:text-5xl font-extrabold text-gray-800 bg-clip-text text-transparent bg-gradient-to-r from-green-600 to-blue-500">
+                EcoLens
+            </h1>
+            <p class="mt-2 text-lg text-gray-500">
+                Material Sustainability Checker
+            </p>
+        </header>
+
+        <!-- Input and Canvas Area -->
+        <section class="grid md:grid-cols-2 gap-8">
+            <!-- Upload Card -->
+            <div class="p-6 bg-green-50 rounded-xl shadow-lg border border-green-200">
+                <h2 class="text-xl font-bold text-green-700 mb-4">1. Select Material Image</h2>
+                <div class="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
+                    <!-- Upload Button -->
+                    <label for="image-upload" class="flex-1 block w-full cursor-pointer bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-xl shadow-md hover:shadow-lg transition duration-300 text-center transform hover:scale-[1.01]">
+                        Upload File
+                    </label>
+                    <input type="file" id="image-upload" accept="image/*" class="hidden" onchange="handleImageUpload(event)">
+                    
+                    <!-- Capture Button -->
+                    <button id="open-camera-btn" onclick="openCamera()" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-xl shadow-md hover:shadow-lg transition duration-300 transform hover:scale-[1.01] flex items-center justify-center">
+                         <svg class="w-6 h-6 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.422 4h3.156a2 2 0 011.664.89l.812 1.22a2 2 0 001.664.89H21a2 2 0 012 2v10a2 2 0 01-2 2H3a2 2 0 01-2-2V9z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                        Capture Image
+                    </button>
+                </div>
+                <p class="mt-4 text-sm text-gray-500 text-center">Image sent to Gemini for analysis.</p>
+            </div>
+
+            <!-- Image Preview/Canvas -->
+            <div class="relative flex items-center justify-center p-2 border-4 border-dashed border-gray-300 rounded-xl bg-gray-100 min-h-[200px] shadow-inner">
+                <canvas id="analysis-canvas" style="display: none;"></canvas>
+                <img id="image-preview" src="" alt="Image Preview" style="display: none; max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 0.25rem;">
+                <p id="placeholder-text" class="absolute text-gray-400 text-center">Your image preview will appear here.</p>
+            </div>
+        </section>
+
+        <div class="border-t border-gray-200 my-10"></div>
+
+        <!-- Prediction Result Area -->
+        <section>
+            <h2 class="text-2xl font-bold text-gray-700 mb-6">2. Classification Result</h2>
+
+            <div id="analysis-result" class="shadow-xl">
+                <!-- Initial State -->
+                <div id="initial-message" class="p-6 text-lg text-gray-500 text-center bg-gray-50">
+                    Awaiting image upload or capture for classification...
+                </div>
+
+                <!-- Loading State (Hidden by default) -->
+                <div id="loading-state" class="hidden p-6 flex flex-col items-center justify-center text-center bg-blue-50 animate-pulse-slow">
+                    <div class="w-10 h-10 border-4 border-blue-600 border-t-transparent border-solid rounded-full animate-spin"></div>
+                    <p class="mt-3 text-blue-800 font-semibold">Analyzing material...</p>
+                    <p class="text-sm text-blue-500">Using advanced image understanding capabilities.</p>
+                </div>
+
+                <!-- Result State (Hidden by default) -->
+                <div id="result-state" class="hidden">
+                    <!-- Dynamic Header -->
+                    <div id="result-header" class="p-5 flex items-center justify-between text-white">
+                        <div class="flex items-center space-x-4">
+                            <svg id="result-icon" class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                <!-- Icon will be set via JS -->
+                            </svg>
+                            <h3 id="prediction-text" class="text-2xl font-extrabold"></h3>
+                        </div>
+                        <p id="confidence-value-header" class="text-xl font-mono font-bold"></p>
+                    </div>
+
+                    <!-- Body Content -->
+                    <div class="p-6 bg-white">
+                        <p class="text-gray-600 mb-2 font-semibold">Confidence Score:</p>
+                        <div class="w-full bg-gray-200 rounded-full h-2.5">
+                            <div id="confidence-bar" class="progress-bar rounded-full" style="width: 0%"></div>
+                        </div>
+                        <p id="confidence-value" class="mt-1 text-xs text-right font-mono text-gray-500"></p>
+                        
+                        <!-- Characteristics/Reasoning Area -->
+                        <div class="mt-6 pt-4 border-t border-gray-200">
+                            <p class="text-lg text-gray-700 font-bold mb-2">Analysis and Characteristics:</p>
+                            <div id="reasoning-box" class="p-4 rounded-lg border border-gray-300 bg-gray-50 shadow-inner">
+                                <p id="reasoning-text" class="text-base text-gray-700"></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Model Explanation -->
+        <div class="mt-10 p-6 bg-blue-100 border-l-4 border-blue-500 rounded-lg shadow-md">
+            <h3 class="text-lg font-semibold text-blue-800 mb-2">How EcoLens Works</h3>
+            <p class="text-sm text-blue-700">
+                This app uses the Natural Language Processing (NLP) vision model, classifying the material based on its visual properties (texture, processing, color, and form) and returning a detailed **reasoning** for its Eco-Friendly or Non-Eco-Friendly label.
+            </p>
+        </div>
+
+    </div>
+    
+    <!-- Camera Overlay (New) -->
+    <div id="camera-overlay" class="fixed inset-0 bg-gray-900 bg-opacity-95 hidden z-50 flex flex-col items-center justify-center p-4">
+        <h2 class="text-2xl font-bold text-white mb-4">Live Camera Feed</h2>
+        <video id="camera-feed" class="w-full max-w-lg rounded-xl shadow-2xl border-4 border-white object-cover" autoplay playsinline></video>
+        <div class="flex space-x-4 mt-6">
+            <button onclick="captureImage()" class="bg-green-500 hover:bg-green-600 text-white font-bold py-3 px-6 rounded-full shadow-lg transition duration-200 transform hover:scale-105">
+                Take Photo
+            </button>
+            <button onclick="closeCamera()" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded-full shadow-lg transition duration-200 transform hover:scale-105">
+                Cancel
+            </button>
+        </div>
+    </div>
+    
+    <!-- Custom Message Box Container (for error messages) -->
+    <div id="message-box-container"></div>
+
+
+    <script type="text/javascript">
+        // --- API & Utility Setup ---
+        const apiKey = "AIzaSyCStHw23SdR5Uiet0ypqVESj4BLtDVwkJk"; 
+        const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+        
+        // --- Global References ---
+        const imagePreview = document.getElementById('image-preview');
+        const initialMessage = document.getElementById('initial-message');
+        const loadingState = document.getElementById('loading-state');
+        const resultState = document.getElementById('result-state');
+        const placeholderText = document.getElementById('placeholder-text');
+        const predictionText = document.getElementById('prediction-text');
+        const confidenceBar = document.getElementById('confidence-bar');
+        const confidenceValue = document.getElementById('confidence-value');
+        const confidenceValueHeader = document.getElementById('confidence-value-header');
+        const resultIcon = document.getElementById('result-icon');
+        const reasoningText = document.getElementById('reasoning-text');
+        const resultHeader = document.getElementById('result-header');
+        const analysisResult = document.getElementById('analysis-result');
+        
+        // --- Camera References ---
+        const cameraOverlay = document.getElementById('camera-overlay');
+        const cameraFeed = document.getElementById('camera-feed');
+        const analysisCanvas = document.getElementById('analysis-canvas');
+        let mediaStream = null;
+
+        /**
+         * Utility to convert a Blob (File) to a Base64 string for the API payload.
+         * @param {Blob} blob - The file object.
+         * @returns {Promise<string>} Base64 data string.
+         */
+        function blobToBase64(blob) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    // Extract only the base64 data part (after the comma)
+                    const base64String = reader.result.split(',')[1];
+                    resolve(base64String);
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+            });
+        }
+
+        /**
+         * Handles fetch requests with exponential backoff for resilience.
+         * @param {string} url - API endpoint.
+         * @param {object} options - Fetch options (method, headers, body).
+         * @param {number} retries - Current retry count.
+         */
+        async function exponentialBackoffFetch(url, options, retries = 0) {
+            const delay = Math.pow(2, retries) * 1000;
+            try {
+                const response = await fetch(url, options);
+                if (response.status === 429 && retries < 5) { // Too Many Requests
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    return exponentialBackoffFetch(url, options, retries + 1);
+                }
+                if (!response.ok) {
+                    const errorBody = await response.text();
+                    throw new Error(`API call failed with status ${response.status}: ${errorBody}`);
+                }
+                return response.json();
+            } catch (error) {
+                if (retries < 5) {
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                    return exponentialBackoffFetch(url, options, retries + 1);
+                }
+                throw error;
+            }
+        }
+
+        /**
+         * Custom message box utility (to replace alert())
+         */
+        function showCustomMessageBox(title, message) {
+            const container = document.getElementById('message-box-container');
+            // Remove any existing box before adding a new one
+            if (container.firstChild) { container.removeChild(container.firstChild); }
+            
+            const box = document.createElement('div');
+            box.id = 'custom-message-box';
+            box.className = 'fixed inset-0 bg-black bg-opacity-70 z-[100] flex items-center justify-center p-4';
+            box.innerHTML = `
+                <div class="bg-white p-6 rounded-lg shadow-xl max-w-sm w-full text-center">
+                    <h4 class="text-xl font-bold mb-3 text-gray-800">${title}</h4>
+                    <p class="text-gray-600 mb-4">${message}</p>
+                    <button onclick="document.getElementById('custom-message-box').remove()" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-lg">
+                        OK
+                    </button>
+                </div>
+            `;
+            container.appendChild(box);
+        }
+
+        /**
+         * Resets the UI state to initial.
+         */
+        const resetUI = () => {
+            initialMessage.classList.remove('hidden');
+            loadingState.classList.add('hidden');
+            resultState.classList.add('hidden');
+            placeholderText.classList.remove('hidden');
+            imagePreview.style.display = 'none';
+            imagePreview.src = '';
+            confidenceBar.style.width = '0%';
+            confidenceValue.textContent = '';
+            confidenceValueHeader.textContent = '';
+            reasoningText.textContent = '';
+            analysisResult.className = 'shadow-xl'; // Reset container class
+        };
+
+        /**
+         * Handles the file upload event, loads the image, and triggers classification.
+         * @param {Event} event - The file input change event.
+         */
+        async function handleImageUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            resetUI();
+            
+            initialMessage.classList.add('hidden');
+            placeholderText.classList.add('hidden');
+            loadingState.classList.remove('hidden');
+
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                imagePreview.src = e.target.result;
+                imagePreview.style.display = 'block';
+                
+                try {
+                    const base64Data = await blobToBase64(file);
+                    await classifyImage(base64Data, file.type);
+                } catch (error) {
+                    console.error("Classification Error:", error);
+                    loadingState.classList.add('hidden');
+                    updateResultUI('API_ERROR', 0.5, 'N/A', true);
+                }
+            };
+            reader.readAsDataURL(file);
+        }
+
+        /**
+         * Opens the device camera stream in the overlay.
+         */
+        async function openCamera() {
+            try {
+                resetUI();
+                const constraints = { video: { facingMode: 'environment' } }; // Prefer rear camera on mobile
+                mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+                
+                // Check if the stream is active before setting it
+                if (mediaStream && mediaStream.active) {
+                    cameraFeed.srcObject = mediaStream;
+                    cameraOverlay.classList.remove('hidden');
+                    // Ensure video metadata loads before playing
+                    await new Promise(resolve => cameraFeed.onloadedmetadata = resolve);
+                    cameraFeed.play();
+                } else {
+                    throw new Error('Camera stream failed to activate.');
+                }
+
+            } catch (err) {
+                console.error("Error accessing camera:", err);
+                let message = "Could not access the camera. Please ensure permissions are granted.";
+                if (err.name === 'NotAllowedError') {
+                    message = "Camera access was denied. Please allow camera permissions in your browser settings.";
+                } else if (err.name === 'NotFoundError') {
+                    message = "No camera was found on this device.";
+                }
+                showCustomMessageBox("Camera Access Required", message);
+            }
+        }
+
+        /**
+         * Closes the camera stream and hides the overlay.
+         */
+        function closeCamera() {
+            if (mediaStream) {
+                mediaStream.getTracks().forEach(track => track.stop());
+                mediaStream = null;
+            }
+            cameraOverlay.classList.add('hidden');
+        }
+
+        /**
+         * Captures a frame from the video stream, processes it, and closes the camera.
+         */
+        async function captureImage() {
+            if (!mediaStream) return;
+
+            // Set canvas dimensions to match video size
+            analysisCanvas.width = cameraFeed.videoWidth;
+            analysisCanvas.height = cameraFeed.videoHeight;
+            const ctx = analysisCanvas.getContext('2d');
+            
+            // Draw the current video frame onto the canvas
+            ctx.drawImage(cameraFeed, 0, 0, analysisCanvas.width, analysisCanvas.height);
+            
+            // Convert canvas image to Base64 (JPEG for smaller size)
+            const dataUrl = analysisCanvas.toDataURL('image/jpeg', 0.8);
+            
+            // Get MIME type and base64 data
+            const mimeType = 'image/jpeg';
+            const base64Data = dataUrl.split(',')[1];
+            
+            // Close camera immediately
+            closeCamera();
+
+            // Show loading state and process the captured image
+            initialMessage.classList.add('hidden');
+            placeholderText.classList.add('hidden');
+            loadingState.classList.remove('hidden');
+
+            // Update the image preview with the captured image
+            imagePreview.src = dataUrl;
+            imagePreview.style.display = 'block';
+
+            try {
+                await classifyImage(base64Data, mimeType);
+            } catch (error) {
+                console.error("Classification Error:", error);
+                loadingState.classList.add('hidden');
+                updateResultUI('API_ERROR', 0.5, 'N/A', true);
+            }
+        }
+
+        /**
+         * Classifies the image using the Gemini API.
+         * @param {string} base64Data - Base64 encoded image data.
+         * @param {string} mimeType - Image MIME type (e.g., 'image/jpeg').
+         */
+        async function classifyImage(base64Data, mimeType) {
+            
+            const systemPrompt = `You are a sustainability expert and material classifier. Analyze the provided image and classify the primary visible material based on its environmental impact as either "Eco-Friendly" or "Non-Eco-Friendly".
+- Eco-Friendly materials include natural fibers, untreated wood, paper, bamboo, glass, and certified compostable materials.
+- Non-Eco-Friendly materials include most plastics, processed metals, unrecyclable composites, and styrofoam.
+You must also provide a brief, expert explanation in the 'reasoning' field detailing the visual and contextual characteristics of the material that led to your classification (e.g., texture, source, processing evidence, recyclability indicators).
+Based on your classification, provide a 'confidence' score between 0.60 (low confidence but above random guess) and 0.99 (very high confidence) reflecting the certainty of your prediction.
+You must only respond with a single JSON object matching the provided schema. Do not include any text outside the JSON object.`;
+
+            const userQuery = "Classify the material shown in this image. Is it Eco-Friendly or Non-Eco-Friendly? Also, provide the reasoning based on the material's characteristics.";
+
+            const payload = {
+                contents: [
+                    {
+                        role: "user",
+                        parts: [
+                            { text: userQuery },
+                            {
+                                inlineData: {
+                                    mimeType: mimeType,
+                                    data: base64Data
+                                }
+                            }
+                        ]
+                    }
+                ],
+                systemInstruction: {
+                    parts: [{ text: systemPrompt }]
+                },
+                generationConfig: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "OBJECT",
+                        properties: {
+                            "prediction": { 
+                                "type": "STRING",
+                                "enum": ["Eco-Friendly", "Non-Eco-Friendly"],
+                                "description": "The classification of the material."
+                            },
+                            "confidence": {
+                                "type": "NUMBER",
+                                "description": "A confidence score between 0.60 and 0.99."
+                            },
+                            "reasoning": {
+                                "type": "STRING",
+                                "description": "A brief explanation of the material characteristics that determined the classification."
+                            }
+                        },
+                        required: ["prediction", "confidence", "reasoning"]
+                    }
+                }
+            };
+
+            const options = {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            };
+
+            try {
+                const result = await exponentialBackoffFetch(API_URL, options);
+                
+                let jsonResponse;
+                const jsonString = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                
+                if (jsonString) {
+                    jsonResponse = JSON.parse(jsonString);
+                    updateResultUI(jsonResponse.prediction, jsonResponse.confidence, jsonResponse.reasoning);
+                } else {
+                    throw new Error("Invalid response structure from API.");
+                }
+
+            } catch (error) {
+                console.error("Gemini API Classification Failed:", error);
+                updateResultUI('API_ERROR', 0.5, 'Error communicating with the classification model.', true);
+            }
+        }
+
+        /**
+         * Updates the UI elements with the classification result.
+         * @param {string} prediction - The resulting label ('Eco-Friendly', 'Non-Eco-Friendly', or 'API_ERROR').
+         * @param {number} confidence - The confidence score (0 to 1).
+         * @param {string} reasoning - The explanation from the LLM.
+         * @param {boolean} isError - Flag for error state.
+         */
+        function updateResultUI(prediction, confidence, reasoning, isError = false) {
+            loadingState.classList.add('hidden');
+            resultState.classList.remove('hidden');
+
+            const isEco = prediction === 'Eco-Friendly';
+            const confidencePercent = `${(confidence * 100).toFixed(1)}%`;
+
+            // Set main prediction text
+            predictionText.textContent = prediction;
+            reasoningText.textContent = reasoning;
+            confidenceValue.textContent = confidencePercent;
+            confidenceValueHeader.textContent = confidencePercent;
+
+            // Set color classes based on prediction/error
+            let barColor = 'bg-gray-500';
+            let headerBgColor = 'bg-gray-500';
+
+            if (isError || prediction === 'API_ERROR') {
+                headerBgColor = 'bg-red-700';
+                barColor = 'bg-red-500';
+                predictionText.textContent = 'Classification Failed';
+                reasoningText.textContent = 'Could not process the image or receive a valid structured response from the model.';
+            } else if (isEco) {
+                headerBgColor = 'bg-green-600';
+                barColor = 'bg-green-600';
+            } else {
+                headerBgColor = 'bg-red-600';
+                barColor = 'bg-red-600';
+            }
+
+            // Apply color classes
+            resultHeader.className = `p-5 flex items-center justify-between text-white ${headerBgColor}`;
+            confidenceBar.className = `progress-bar rounded-full ${barColor}`;
+
+            
+            // Update icon
+            resultIcon.innerHTML = isEco
+                ? `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path>` // Checkmark circle
+                : `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z"></path>`; // X mark circle
+        }
+
+        // Initialize UI state on load
+        window.onload = resetUI;
+    </script>
+</body>
+</html>
