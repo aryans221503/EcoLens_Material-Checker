@@ -1,3 +1,6 @@
+DEMO VIDEO DRIVE LINK : (https://drive.google.com/file/d/1X-4x4hMMXZmo-WtEs5-YILN06YwL78Ch/view?usp=drive_link)
+DEPLOYED PROJECT LINK : (https://aryans221503.github.io/EcoLens_Material-Checker/)
+
 # EcoLens_Material-Checker
 EcoLens is a smart web application that uses generative AI to analyze and classify the environmental sustainability of materials from a single image.  Users can upload a photo or capture a new one with their device camera, and the app's AI-driven backend will instantly identify the material and provide a detailed report on its environmental impact.
 Core Problem
