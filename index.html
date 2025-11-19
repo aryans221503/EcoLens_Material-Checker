@@ -13,13 +13,12 @@
         import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
         // Use provided global variables
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : {apiKey: "AIzaSyCxKkfAs2J4sT1nzsT13bV0-ZdXRiSVqbE",
-  authDomain: "ecolens-material-checker.firebaseapp.com",
-  projectId: "ecolens-material-checker",
-  storageBucket: "ecolens-material-checker.firebasestorage.app",
-  messagingSenderId: "383278574134",
-  appId: "1:383278574134:web:4267b2d38dcc09e5c74697",
-  measurementId: "G-1ZGPCLW4KZ"});
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : {apiKey: "AIzaSyCbnO72ep2XZtmAhNA1mMZ8L_ZD-slpvjM",
+  authDomain: "ecolens-f9a32.firebaseapp.com",
+  projectId: "ecolens-f9a32",
+  storageBucket: "ecolens-f9a32.firebasestorage.app",
+  messagingSenderId: "389235989820",
+  appId: "1:389235989820:web:7c1f8f4d9811e124e3d239"});
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
         if (Object.keys(firebaseConfig).length) {
@@ -35,8 +34,6 @@
                     try {
                         if (initialAuthToken) {
                             await signInWithCustomToken(auth, initialAuthToken);
-                        } else {
-                            await signInAnonymously(auth);
                         }
                     } catch (error) {
                         console.error("Firebase Auth Error:", error);
@@ -157,6 +154,16 @@
 
                     <!-- Body Content -->
                     <div class="p-6 bg-white">
+                        <!-- New Recyclability Section -->
+                        <div class="flex items-center justify-between mb-6 p-4 rounded-xl bg-gray-50 border border-gray-100">
+                            <div class="flex items-center">
+                                <span class="text-gray-600 font-bold mr-2">Disposal Recommendation:</span>
+                            </div>
+                            <span id="disposal-badge" class="px-4 py-1.5 rounded-full text-sm font-bold border shadow-sm">
+                                <!-- JS will populate this -->
+                            </span>
+                        </div>
+
                         <p class="text-gray-600 mb-2 font-semibold">Confidence Score:</p>
                         <div class="w-full bg-gray-200 rounded-full h-2.5">
                             <div id="confidence-bar" class="progress-bar rounded-full" style="width: 0%"></div>
@@ -222,6 +229,7 @@
         const reasoningText = document.getElementById('reasoning-text');
         const resultHeader = document.getElementById('result-header');
         const analysisResult = document.getElementById('analysis-result');
+        const disposalBadge = document.getElementById('disposal-badge'); // Renamed Reference
         
         // --- Camera References ---
         const cameraOverlay = document.getElementById('camera-overlay');
@@ -439,13 +447,17 @@
         async function classifyImage(base64Data, mimeType) {
             
             const systemPrompt = `You are a sustainability expert and material classifier. Analyze the provided image and classify the primary visible material based on its environmental impact as either "Eco-Friendly" or "Non-Eco-Friendly".
-- Eco-Friendly materials include natural fibers, untreated wood, paper, bamboo, glass, and certified compostable materials.
-- Non-Eco-Friendly materials include most plastics, processed metals, unrecyclable composites, and styrofoam.
+
+CRITICAL: You must classify the disposal method into exactly one of these three categories:
+1. "Recyclable" - For materials like paper, cardboard, glass, metal cans, and certain rigid plastics (PET, HDPE).
+2. "Compost" - For organic waste, food scraps, soiled paper, yard trimmings, and certified compostable bioplastics.
+3. "Trash" - For mixed multi-layer packaging, wrappers, styrofoam, hygiene products, and non-recyclable plastics.
+
 You must also provide a brief, expert explanation in the 'reasoning' field detailing the visual and contextual characteristics of the material that led to your classification (e.g., texture, source, processing evidence, recyclability indicators).
 Based on your classification, provide a 'confidence' score between 0.60 (low confidence but above random guess) and 0.99 (very high confidence) reflecting the certainty of your prediction.
 You must only respond with a single JSON object matching the provided schema. Do not include any text outside the JSON object.`;
 
-            const userQuery = "Classify the material shown in this image. Is it Eco-Friendly or Non-Eco-Friendly? Also, provide the reasoning based on the material's characteristics.";
+            const userQuery = "Classify the material shown in this image. Is it Recyclable, Compost, or Trash? Provide reasoning.";
 
             const payload = {
                 contents: [
@@ -473,7 +485,12 @@ You must only respond with a single JSON object matching the provided schema. Do
                             "prediction": { 
                                 "type": "STRING",
                                 "enum": ["Eco-Friendly", "Non-Eco-Friendly"],
-                                "description": "The classification of the material."
+                                "description": "The general sustainability classification."
+                            },
+                            "disposal_method": {
+                                "type": "STRING",
+                                "enum": ["Recyclable", "Compost", "Trash"],
+                                "description": "The specific disposal category."
                             },
                             "confidence": {
                                 "type": "NUMBER",
@@ -481,10 +498,10 @@ You must only respond with a single JSON object matching the provided schema. Do
                             },
                             "reasoning": {
                                 "type": "STRING",
-                                "description": "A brief explanation of the material characteristics that determined the classification."
+                                "description": "A brief explanation of the material characteristics."
                             }
                         },
-                        required: ["prediction", "confidence", "reasoning"]
+                        required: ["prediction", "disposal_method", "confidence", "reasoning"]
                     }
                 }
             };
@@ -503,7 +520,8 @@ You must only respond with a single JSON object matching the provided schema. Do
                 
                 if (jsonString) {
                     jsonResponse = JSON.parse(jsonString);
-                    updateResultUI(jsonResponse.prediction, jsonResponse.confidence, jsonResponse.reasoning);
+                    // Pass disposal_method instead of recyclability
+                    updateResultUI(jsonResponse.prediction, jsonResponse.confidence, jsonResponse.reasoning, false, jsonResponse.disposal_method);
                 } else {
                     throw new Error("Invalid response structure from API.");
                 }
@@ -520,8 +538,9 @@ You must only respond with a single JSON object matching the provided schema. Do
          * @param {number} confidence - The confidence score (0 to 1).
          * @param {string} reasoning - The explanation from the LLM.
          * @param {boolean} isError - Flag for error state.
+         * @param {string} disposalMethod - The disposal category.
          */
-        function updateResultUI(prediction, confidence, reasoning, isError = false) {
+        function updateResultUI(prediction, confidence, reasoning, isError = false, disposalMethod = 'Unknown') {
             loadingState.classList.add('hidden');
             resultState.classList.remove('hidden');
 
@@ -533,6 +552,26 @@ You must only respond with a single JSON object matching the provided schema. Do
             reasoningText.textContent = reasoning;
             confidenceValue.textContent = confidencePercent;
             confidenceValueHeader.textContent = confidencePercent;
+
+            // Handle Disposal Badge logic with new categories
+            disposalBadge.textContent = disposalMethod;
+            
+            // Reset classes
+            disposalBadge.className = "px-4 py-1.5 rounded-full text-sm font-bold border shadow-sm";
+
+            if (disposalMethod === 'Recyclable') {
+                // Blue for Recyclable
+                disposalBadge.classList.add('bg-blue-100', 'text-blue-800', 'border-blue-200');
+            } else if (disposalMethod === 'Compost') {
+                // Earthy Green for Compost
+                disposalBadge.classList.add('bg-emerald-100', 'text-emerald-800', 'border-emerald-200');
+            } else if (disposalMethod === 'Trash') {
+                // Dark Gray/Red for Trash
+                disposalBadge.classList.add('bg-gray-200', 'text-gray-800', 'border-gray-300');
+            } else {
+                // Default/Unknown
+                disposalBadge.classList.add('bg-yellow-100', 'text-yellow-800', 'border-yellow-200');
+            }
 
             // Set color classes based on prediction/error
             let barColor = 'bg-gray-500';
